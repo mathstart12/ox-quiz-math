@@ -59,6 +59,8 @@
     const ADMIN_SECRET_KEY = "MATH2025ADMIN";
     const ADMIN_PASSWORD = "teacher2025"; // 관리자 공통 비밀번호
 
+    // 학생 상태: 'active' (재원생), 'withdrawn' (퇴원생)
+    
     // 아이콘 SVG
     const icons = {
       user: '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z"/>',
@@ -497,26 +499,43 @@
       // 관리자 전용
       adminStudents: [], // 관리자가 담당하는 학생 목록
       selectedStudent: null, // 관리자가 선택한 학생
-      showAdminRegister: false
+      showAdminRegister: false,
+      studentStatusFilter: 'active', // 'active' (재원생) 또는 'withdrawn' (퇴원생)
+      // 학습 기록 전용
+      recordSelectedCategory: null // 학습 기록에서 선택한 카테고리
     };
 
     // 자동 로그인 체크
     function checkAutoLogin() {
+      // 학생 자동 로그인 체크
       const savedName = localStorage.getItem('ox_quiz_student_name');
       const savedPhone = localStorage.getItem('ox_quiz_student_phone');
       const savedTeacher = localStorage.getItem('ox_quiz_teacher_name');
-      const autoLoginEnabled = localStorage.getItem('ox_quiz_auto_login') === 'true';
+      const studentAutoLoginEnabled = localStorage.getItem('ox_quiz_auto_login') === 'true';
 
-      if (autoLoginEnabled && savedName && savedPhone) {
-        console.log('자동 로그인 시도:', savedName);
+      if (studentAutoLoginEnabled && savedName && savedPhone) {
+        console.log('학생 자동 로그인 시도:', savedName);
         state.studentName = savedName;
         state.phone = savedPhone;
         state.teacherName = savedTeacher || '';
         state.autoLogin = true;
         state.userType = 'student';
-        return true;
+        return { type: 'student' };
       }
-      return false;
+
+      // 관리자 자동 로그인 체크
+      const savedAdminName = localStorage.getItem('ox_quiz_admin_name');
+      const adminAutoLoginEnabled = localStorage.getItem('ox_quiz_admin_auto_login') === 'true';
+
+      if (adminAutoLoginEnabled && savedAdminName) {
+        console.log('관리자 자동 로그인 시도:', savedAdminName);
+        state.adminName = savedAdminName;
+        state.autoLogin = true;
+        state.userType = 'admin';
+        return { type: 'admin', name: savedAdminName };
+      }
+
+      return null;
     }
 
     // 로그인 정보 저장
@@ -533,6 +552,8 @@
       localStorage.removeItem('ox_quiz_student_phone');
       localStorage.removeItem('ox_quiz_teacher_name');
       localStorage.removeItem('ox_quiz_auto_login');
+      localStorage.removeItem('ox_quiz_admin_name');
+      localStorage.removeItem('ox_quiz_admin_auto_login');
       state.isLoggedIn = false;
       state.userType = null;
       state.studentName = '';
@@ -566,7 +587,8 @@
             lockTimers: {},
             teacherName: state.teacherName,
             studentName: state.studentName,
-            phone: state.phone
+            phone: state.phone,
+            status: 'active' // 신규 학생은 재원생으로 시작
           };
           state.lockTimers = {};
         }
@@ -578,7 +600,8 @@
           lockTimers: {},
           teacherName: state.teacherName,
           studentName: state.studentName,
-          phone: state.phone
+          phone: state.phone,
+          status: 'active'
         };
         state.lockTimers = {};
       }
@@ -712,13 +735,23 @@
         
         await loadData(id);
         
+        // 퇴원생 체크
+        const studentData = state.allStudentData[state.studentName];
+        if (studentData && studentData.status === 'withdrawn') {
+          state.loading = false;
+          alert('퇴원 처리된 학생은 로그인할 수 없습니다.\n담당 선생님께 문의해주세요.');
+          logout();
+          return;
+        }
+        
         // 신규 학생인 경우 선생님 정보 저장
         if (isNewStudent) {
           const newData = {
             ...state.allStudentData[state.studentName],
             teacherName: state.teacherName.trim(),
             studentName: state.studentName.trim(),
-            phone: p
+            phone: p,
+            status: 'active'
           };
           await saveData(newData);
         }
@@ -757,6 +790,15 @@
         alert('등록되지 않은 관리자입니다. 먼저 관리자 등록을 진행해주세요.');
         render();
         return;
+      }
+
+      // 자동 로그인 체크박스 확인
+      const autoLoginChecked = document.getElementById('adminAutoLoginCheckbox')?.checked || false;
+      
+      // 자동 로그인 정보 저장
+      if (autoLoginChecked) {
+        localStorage.setItem('ox_quiz_admin_name', state.adminName.trim());
+        localStorage.setItem('ox_quiz_admin_auto_login', 'true');
       }
 
       await loadAdminStudents(state.adminName.trim());
@@ -1064,6 +1106,17 @@
                 class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl focus:outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 text-white placeholder-gray-500 transition-all"
               />
             </div>
+
+            <div class="flex items-center">
+              <input
+                type="checkbox"
+                id="adminAutoLoginCheckbox"
+                class="w-4 h-4 bg-gray-800 border-gray-700 rounded focus:ring-orange-500 focus:ring-2"
+              />
+              <label for="adminAutoLoginCheckbox" class="ml-2 text-sm text-gray-300">
+                자동 로그인
+              </label>
+            </div>
             
             <button
               id="adminLoginBtn"
@@ -1201,6 +1254,11 @@
         return;
       }
 
+      // 재원생/퇴원생 필터링
+      const activeStudents = state.adminStudents.filter(s => s.status !== 'withdrawn');
+      const withdrawnStudents = state.adminStudents.filter(s => s.status === 'withdrawn');
+      const displayStudents = (state.studentStatusFilter === 'withdrawn') ? withdrawnStudents : activeStudents;
+      
       app.innerHTML = `
         <div class="min-h-screen p-6">
           <div class="max-w-5xl mx-auto">
@@ -1221,24 +1279,40 @@
               </div>
             </div>
 
+            <!-- 재원생/퇴원생 탭 -->
             <div class="mb-6">
+              <div class="flex gap-2 mb-4">
+                <button id="activeTab" class="px-6 py-3 rounded-lg font-bold transition-all ${state.studentStatusFilter !== 'withdrawn' ? 'bg-orange-500 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}">
+                  재원생 (${activeStudents.length}명)
+                </button>
+                <button id="withdrawnTab" class="px-6 py-3 rounded-lg font-bold transition-all ${state.studentStatusFilter === 'withdrawn' ? 'bg-gray-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}">
+                  퇴원생 (${withdrawnStudents.length}명)
+                </button>
+              </div>
+              
               <div class="bg-gray-900 rounded-xl p-4 border border-gray-800">
                 <div class="flex items-center justify-between">
-                  <span class="text-gray-400 text-sm font-semibold">전체 학생 수</span>
-                  <span class="text-2xl font-bold text-orange-400">${state.adminStudents.length}명</span>
+                  <span class="text-gray-400 text-sm font-semibold">
+                    ${state.studentStatusFilter === 'withdrawn' ? '퇴원생' : '재원생'} 수
+                  </span>
+                  <span class="text-2xl font-bold text-orange-400">${displayStudents.length}명</span>
                 </div>
               </div>
             </div>
 
-            ${state.adminStudents.length === 0 ? `
+            ${displayStudents.length === 0 ? `
               <div class="bg-gray-900 rounded-2xl p-12 text-center border border-gray-800">
                 ${icon('users', 'mx-auto mb-4 text-gray-600', 48)}
-                <p class="text-gray-400 font-medium">아직 담당 학생이 없습니다.</p>
-                <p class="text-sm text-gray-500 mt-2">학생이 회원가입할 때 선생님 성함을 입력하면 자동으로 연결됩니다.</p>
+                <p class="text-gray-400 font-medium">
+                  ${state.studentStatusFilter === 'withdrawn' ? '퇴원 처리된 학생이 없습니다.' : '아직 담당 학생이 없습니다.'}
+                </p>
+                ${state.studentStatusFilter !== 'withdrawn' ? `
+                  <p class="text-sm text-gray-500 mt-2">학생이 회원가입할 때 선생님 성함을 입력하면 자동으로 연결됩니다.</p>
+                ` : ''}
               </div>
             ` : `
               <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-                ${state.adminStudents.map(student => {
+                ${displayStudents.map(student => {
                   const attempts = student.attempts || [];
                   const totalAttempts = attempts.length;
                   const avgPercentage = totalAttempts > 0 
@@ -1294,6 +1368,17 @@
         }
       });
 
+      // 탭 전환 이벤트
+      document.getElementById('activeTab').addEventListener('click', () => {
+        state.studentStatusFilter = 'active';
+        render();
+      });
+
+      document.getElementById('withdrawnTab').addEventListener('click', () => {
+        state.studentStatusFilter = 'withdrawn';
+        render();
+      });
+
       document.querySelectorAll('.student-btn').forEach(btn => {
         btn.addEventListener('click', () => {
           const studentId = btn.dataset.student;
@@ -1317,7 +1402,7 @@
             </div>
 
             <div class="bg-gray-900 rounded-2xl p-6 mb-6 shadow-xl border border-orange-500/30">
-              <div class="flex items-center justify-between">
+              <div class="flex items-center justify-between mb-4">
                 <div class="flex items-center">
                   <div class="w-12 h-12 bg-gradient-to-br from-orange-500 to-orange-600 rounded-full flex items-center justify-center mr-3">
                     ${icon('user', 'text-white')}
@@ -1327,7 +1412,32 @@
                     <p class="text-sm text-gray-400 mt-1">${student.phone || ''}</p>
                   </div>
                 </div>
+                ${student.status === 'withdrawn' ? `
+                  <button id="reactivateBtn" class="px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg font-bold text-white transition-all transform hover:scale-105 active:scale-95 text-sm flex items-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                    재원 처리
+                  </button>
+                ` : `
+                  <button id="withdrawBtn" class="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 rounded-lg font-bold text-white transition-all transform hover:scale-105 active:scale-95 text-sm flex items-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7a4 4 0 11-8 0 4 4 0 018 0zM9 14a6 6 0 00-6 6v1h12v-1a6 6 0 00-6-6zM21 12h-6"/>
+                    </svg>
+                    퇴원 처리
+                  </button>
+                `}
               </div>
+              ${student.status === 'withdrawn' ? `
+                <div class="bg-yellow-900/30 border border-yellow-600/50 rounded-lg p-3 mt-4">
+                  <p class="text-yellow-400 text-sm font-bold flex items-center gap-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                    </svg>
+                    퇴원 처리된 학생입니다
+                  </p>
+                </div>
+              ` : ''}
             </div>
 
             <div class="grid md:grid-cols-4 gap-4 mb-6">
@@ -1449,6 +1559,62 @@
         state.selectedStudent = null;
         render();
       });
+
+      // 퇴원 처리 버튼
+      const withdrawBtn = document.getElementById('withdrawBtn');
+      if (withdrawBtn) {
+        withdrawBtn.addEventListener('click', async () => {
+          if (confirm(`${student.studentName} 학생을 퇴원 처리하시겠습니까?\n\n퇴원생으로 이동하며, 나중에 재원 처리할 수 있습니다.`)) {
+            try {
+              await db.collection('students').doc(student.id).update({
+                status: 'withdrawn',
+                withdrawnAt: new Date().toISOString()
+              });
+              alert('퇴원 처리가 완료되었습니다.');
+              
+              // 상태 업데이트
+              student.status = 'withdrawn';
+              state.studentStatusFilter = 'withdrawn';
+              state.selectedStudent = null;
+              
+              // 데이터 새로고침
+              await loadAdminData(state.adminName);
+              render();
+            } catch (error) {
+              console.error('퇴원 처리 오류:', error);
+              alert('퇴원 처리 중 오류가 발생했습니다.');
+            }
+          }
+        });
+      }
+
+      // 재원 처리 버튼
+      const reactivateBtn = document.getElementById('reactivateBtn');
+      if (reactivateBtn) {
+        reactivateBtn.addEventListener('click', async () => {
+          if (confirm(`${student.studentName} 학생을 재원 처리하시겠습니까?\n\n재원생 목록으로 이동합니다.`)) {
+            try {
+              await db.collection('students').doc(student.id).update({
+                status: 'active',
+                reactivatedAt: new Date().toISOString()
+              });
+              alert('재원 처리가 완료되었습니다.');
+              
+              // 상태 업데이트
+              student.status = 'active';
+              state.studentStatusFilter = 'active';
+              state.selectedStudent = null;
+              
+              // 데이터 새로고침
+              await loadAdminData(state.adminName);
+              render();
+            } catch (error) {
+              console.error('재원 처리 오류:', error);
+              alert('재원 처리 중 오류가 발생했습니다.');
+            }
+          }
+        });
+      }
     }
 
     function renderMainScreen() {
@@ -1518,6 +1684,7 @@
 
       document.getElementById('recordBtn').addEventListener('click', () => {
         state.showResults = true;
+        state.recordSelectedCategory = null; // Chapter 선택 화면을 먼저 보여주기 위해 초기화
         render();
       });
 
@@ -1661,6 +1828,7 @@
 
       document.getElementById('resultsBtn').addEventListener('click', () => {
         state.showResults = true;
+        state.recordSelectedCategory = state.selectedCategory; // 현재 선택된 카테고리를 학습 기록용으로 설정
         render();
       });
 
@@ -1703,8 +1871,8 @@
         <div class="min-h-screen p-6">
           <div class="max-w-4xl mx-auto">
             <div class="mb-4">
-              <button id="homeBtn" class="text-sm text-orange-500 hover:text-orange-400 flex items-center font-semibold">
-                ${icon('home', '', 16)}메인으로 돌아가기
+              <button id="backToThemeBtn" class="text-sm text-orange-500 hover:text-orange-400 flex items-center font-semibold">
+                ${icon('chevronLeft', '', 16)}테마 선택으로 돌아가기
               </button>
             </div>
 
@@ -1852,9 +2020,10 @@
         </div>
       `;
 
-      document.getElementById('homeBtn').addEventListener('click', () => {
-        state.selectedCategory = null;
+      document.getElementById('backToThemeBtn').addEventListener('click', () => {
         state.currentTheme = null;
+        state.currentQuestion = 0;
+        state.answers = {};
         render();
       });
 
@@ -1893,8 +2062,8 @@
     }
 
     function renderResultsScreen(app, currentStudentAttempts) {
-      const categoryAttempts = state.selectedCategory 
-        ? currentStudentAttempts.filter(a => a.categoryId === state.selectedCategory)
+      const categoryAttempts = state.recordSelectedCategory 
+        ? currentStudentAttempts.filter(a => a.categoryId === state.recordSelectedCategory)
         : [];
 
       app.innerHTML = `
@@ -1917,15 +2086,15 @@
               </div>
             </div>
 
-            ${state.selectedCategory ? `
+            ${state.recordSelectedCategory ? `
               <div class="mb-4">
                 <button id="allRecordsBtn" class="text-sm text-orange-500 hover:text-orange-400 flex items-center font-semibold">
-                  ${icon('chevronLeft', '', 16)}전체 기록으로 돌아가기
+                  ${icon('chevronLeft', '', 16)}챕터 선택으로 돌아가기
                 </button>
               </div>
               
               <h3 class="text-lg font-bold text-white mb-4">
-                ${categories.find(c => c.id === state.selectedCategory)?.name}
+                ${categories.find(c => c.id === state.recordSelectedCategory)?.name}
               </h3>
 
               ${categoryAttempts.length === 0 ? `
@@ -1936,16 +2105,21 @@
               ` : `
                 <div class="space-y-4">
                   ${(() => {
+                    // Theme별로 그룹화 (themeId 기준으로 정렬)
                     const themeGroups = {};
                     categoryAttempts.forEach(attempt => {
-                      const key = `${attempt.categoryId}-${attempt.themeId}`;
+                      const key = attempt.themeId;
                       if (!themeGroups[key]) {
                         themeGroups[key] = [];
                       }
                       themeGroups[key].push(attempt);
                     });
 
-                    return Object.entries(themeGroups).map(([key, attempts]) => {
+                    // themeId 순서대로 정렬
+                    const sortedThemeIds = Object.keys(themeGroups).map(Number).sort((a, b) => a - b);
+
+                    return sortedThemeIds.map(themeId => {
+                      const attempts = themeGroups[themeId];
                       const lastAttempt = attempts[attempts.length - 1];
                       const allWrongQuestions = attempts
                         .flatMap(a => a.wrongQuestions || [])
@@ -1984,6 +2158,23 @@
                               <div class="text-xs text-gray-500">시도 횟수</div>
                             </div>
                           </div>
+
+                          ${isRetakeAvailable ? `
+                            <button 
+                              data-category="${lastAttempt.categoryId}" 
+                              data-theme="${lastAttempt.themeId}" 
+                              class="retake-btn w-full mb-4 px-6 py-3 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 rounded-xl font-bold text-white transition-all transform hover:scale-105 active:scale-95 shadow-lg shadow-orange-500/30"
+                            >
+                              🔥 재시험 도전하기
+                            </button>
+                          ` : `
+                            <div class="mb-4 px-6 py-3 bg-green-900/20 border border-green-500/30 rounded-xl text-center">
+                              <p class="text-green-400 font-bold text-sm flex items-center justify-center gap-2">
+                                ${icon('checkCircle', '', 18)}
+                                완벽하게 마스터했습니다!
+                              </p>
+                            </div>
+                          `}
 
                           ${allWrongQuestions.length > 0 ? `
                             <div class="bg-red-900/20 border border-red-500/30 rounded-xl p-4">
@@ -2063,21 +2254,38 @@
 
       document.getElementById('backBtn').addEventListener('click', () => {
         state.showResults = false;
+        state.recordSelectedCategory = null; // 초기화
         render();
       });
 
-      if (state.selectedCategory) {
+      if (state.recordSelectedCategory) {
         const allRecordsBtn = document.getElementById('allRecordsBtn');
         if (allRecordsBtn) {
           allRecordsBtn.addEventListener('click', () => {
-            state.selectedCategory = null;
+            state.recordSelectedCategory = null;
             render();
           });
         }
+
+        // 재시험 버튼 이벤트 리스너
+        document.querySelectorAll('.retake-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const categoryId = parseInt(btn.dataset.category);
+            const themeId = parseInt(btn.dataset.theme);
+            
+            // 재시험 시작
+            state.showResults = false;
+            state.selectedCategory = categoryId;
+            state.currentTheme = themeId;
+            state.currentQuestion = 0;
+            state.answers = {};
+            render();
+          });
+        });
       } else {
         document.querySelectorAll('.cat-record-btn').forEach(btn => {
           btn.addEventListener('click', () => {
-            state.selectedCategory = parseInt(btn.dataset.cat);
+            state.recordSelectedCategory = parseInt(btn.dataset.cat);
             render();
           });
         });
@@ -2116,9 +2324,30 @@
     (async function initApp() {
       await initIndexedDB();
       
-      if (checkAutoLogin()) {
-        console.log('자동 로그인 실행');
-        await handleStudentLogin(true);
+      const autoLoginInfo = checkAutoLogin();
+      if (autoLoginInfo) {
+        console.log('자동 로그인 실행:', autoLoginInfo.type);
+        
+        if (autoLoginInfo.type === 'student') {
+          await handleStudentLogin(true);
+        } else if (autoLoginInfo.type === 'admin') {
+          // 관리자 자동 로그인
+          state.loading = true;
+          render();
+          
+          try {
+            await loadAdminStudents(autoLoginInfo.name);
+            state.isLoggedIn = true;
+            state.userType = 'admin';
+            state.loading = false;
+            render();
+          } catch (error) {
+            console.error('관리자 자동 로그인 오류:', error);
+            state.loading = false;
+            alert('자동 로그인 중 오류가 발생했습니다.');
+            logout();
+          }
+        }
       } else {
         render();
       }
