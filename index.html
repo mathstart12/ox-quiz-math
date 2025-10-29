@@ -780,6 +780,10 @@
         return;
       }
 
+      // 자동 로그인 체크박스 확인 (render 전에 먼저 확인)
+      const autoLoginChecked = document.getElementById('adminAutoLoginCheckbox')?.checked || false;
+      console.log('관리자 자동 로그인 체크:', autoLoginChecked);
+
       state.loading = true;
       render();
 
@@ -792,11 +796,9 @@
         return;
       }
 
-      // 자동 로그인 체크박스 확인
-      const autoLoginChecked = document.getElementById('adminAutoLoginCheckbox')?.checked || false;
-      
       // 자동 로그인 정보 저장
       if (autoLoginChecked) {
+        console.log('관리자 자동 로그인 정보 저장:', state.adminName.trim());
         localStorage.setItem('ox_quiz_admin_name', state.adminName.trim());
         localStorage.setItem('ox_quiz_admin_auto_login', 'true');
       }
@@ -2329,7 +2331,36 @@
         console.log('자동 로그인 실행:', autoLoginInfo.type);
         
         if (autoLoginInfo.type === 'student') {
-          await handleStudentLogin(true);
+          // 학생 자동 로그인
+          state.loading = true;
+          render();
+          
+          try {
+            const p = state.phone.replace(/[^0-9]/g, '');
+            const id = `${state.studentName.trim()}_${p}`;
+            state.uid = id;
+            
+            await loadData(id);
+            
+            // 퇴원생 체크
+            const studentData = state.allStudentData[state.studentName];
+            if (studentData && studentData.status === 'withdrawn') {
+              state.loading = false;
+              alert('퇴원 처리된 학생은 로그인할 수 없습니다.\n담당 선생님께 문의해주세요.');
+              logout();
+              return;
+            }
+            
+            state.isLoggedIn = true;
+            state.userType = 'student';
+            state.loading = false;
+            render();
+          } catch (error) {
+            console.error('학생 자동 로그인 오류:', error);
+            state.loading = false;
+            alert('자동 로그인 중 오류가 발생했습니다.');
+            logout();
+          }
         } else if (autoLoginInfo.type === 'admin') {
           // 관리자 자동 로그인
           state.loading = true;
